@@ -1,121 +1,63 @@
 
-#include "message.h"
-
-#include <sys/types.h> 
-#include <unistd.h>
-
-#include <sys/stat.h>
-#include<stdio.h>
-#include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <string.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <stdlib.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <strings.h>
+#include <unistd.h>
+#define PORT 12345
 
-int fifo_me;
-requete_client_serveur_t* requete;
+int sock, socket2, lg;
+char mess[80];
+struct sockaddr_in local; // champs d entete local
+struct sockaddr_in distant; // champs d entete distant
 
-void creation_tube_nomme() {
-    mkfifo(FIFO_SERVEUR,0666);
-}
-
-
-void recevoir_requete(){
-    requete=malloc(sizeof(requete_client_serveur_t)); //on alloue la mémoire à la requete
-    fifo_me=open(FIFO_SERVEUR,O_RDONLY); //on ouvre le fifo du serveur
-    read(fifo_me,requete,sizeof(requete_client_serveur_t)); //on lis la requete du fifo et on la met dans requete
-}
-
-
-int calculResultat(char* result)
+void creer_socket()
 {
-    char** bc = malloc(sizeof(char*)); //on alloue la mémoire pour pouvoir executer bc plus tard
-    bc[0] = "bc";
-    bc[1] = NULL;
+    // preparation des champs d entete
+    bzero(&local, sizeof(local)); // mise a zero de la zone adresse
+    local.sin_family = AF_INET; // famille d adresse internet
+    local.sin_port = htons(PORT); // numero de port
+    local.sin_addr.s_addr = INADDR_ANY; // types d adresses prises en charge
+    bzero(&(local.sin_zero),8); // fin de remplissage
+    lg = sizeof(struct sockaddr_in);
+    sock=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP); // creation socket du serveur mode TCP/IP
+    
+    bind(sock,(struct sockaddr*) &local,sizeof(struct sockaddr_in)); // nommage de la socket
+}
 
-    int pipeBc[2]; //création des pipe
-    pipe(pipeBc);
-    int pipeRes[2];
-    pipe(pipeRes);
-
-    pid_t pid=fork();
-    if(pid== 0){
-        close(pipeRes[0]); //fermeture des entrées lecture/écritures non nécessaires
-        close(pipeBc[1]);
+int main()
+{
+    // creation socket
+    creer_socket();
+    listen(sock,10); // mise a l ecoute
+    // boucle sans fin pour la gestion des connexions
+    while(1)
+    { // attente connexion client
+        printf ("En attente d un client\n");
+        socket2=accept(sock,(struct sockaddr*) &distant, &lg);
+        printf ("client connecte \n");
+        pid_t pid=fork();
+        if(pid==0){
+            strcpy(mess,"");
+            while (strncmp(mess,"fin",3)!=0)
+            { 
+                int nb=read(socket2,mess,80);
+                mess[nb] = '\0';
+                printf ("le client me dit %s \n",mess);
+                bzero(mess,80);
+                printf("serveur : écris message\n");
+                fflush(stdout);
+                nb=read(0,mess,80);
+                mess[nb]='\0';
+                write(socket2, mess,nb);
+            }
+            printf("client déconnecté \n");
+            close(socket2); // on lui ferme la socket
+        }
         
-        dup2(pipeBc[0],0); //redirection de l'entrée standard dans l'entrée lecture du pipe
-        dup2(pipeRes[1],1); //redirection de la sortie standard dans l'entrée écriture du pipe
-        close(pipeBc[0]); 
-        close(pipeRes[1]);
-
-        int res = execvp(bc[0],bc); //execution commande bc
-        printf("%i",res);
-        fflush(stdout);
     }
-    else{
-        pid_t pid2=fork();
-        if(pid2==0){
-            close(pipeBc[0]); //fermeture des entrées lecture/écritures non nécessaires
-            close(pipeRes[1]);
-            close(pipeRes[0]);
-
-            dup2(pipeBc[1],1); //redirection de la sortie standard dans l'entrée écriture du pipe
-            close(pipeBc[1]);
-
-            char** echoArgs=malloc(sizeof(char*)*3); //on alloue la mémoire pour pouvoir effectuer la commande echo
-            echoArgs[0]="echo";
-            echoArgs[1]=requete->expression;
-            echoArgs[2]=NULL;
-
-            int res2 = execvp(echoArgs[0],echoArgs); //execution echo
-            printf("%i", res2);
-        }
-        else{
-            close(pipeBc[0]); //fermeture des entrées lecture/écritures non nécessaires
-            close(pipeRes[1]);
-            close(pipeBc[1]);
-            
-            dup2(pipeRes[0],0); //redirection de l'entrée standard dans l'entrée lecture du pipe
-            close(pipeRes[0]);
-
-            waitpid(pid2,NULL,0); //attente de fin de la commande echo
-            fflush(stdout);
-            
-            int taille=read(0,result,256); //lecutre du résultat placé dans result
-            result[taille-1]='\0';
-
-            printf("%s", result);
-            return taille;
-        }
-
-
-    }
-}
-
-void envoyer_resultat(){
-    char* pathname=malloc(sizeof(char)*80); 
-    sprintf(pathname,PATH_FORMAT,requete->client_pid);
-    int fdClient=open(pathname,O_WRONLY); //on ouvre le fifo du client concerné
-    char* resultat=malloc(sizeof(char)*80);
-    int res=calculResultat(resultat);
-    write(fdClient,resultat,res); //on écrit le resultat de la requete dans le fifo
-    close(fdClient);
-}
-
-void terminer(){
-
-}
-
-int main(int argc, char** argv){
-    
-    creation_tube_nomme();
-    
-    while(1){
-    recevoir_requete();
-    envoyer_resultat();
-    }
-
-    terminer();
-    
 }
