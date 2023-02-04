@@ -1,55 +1,43 @@
-#include "message.h"
-#include <sys/types.h> 
-#include <unistd.h>
-
-#include <sys/stat.h>
-#include<stdio.h>
-#include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <string.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <strings.h>
+#include <unistd.h>
+#include <netdb.h>
+#define PORT 12345
+#define SERV "127.0.0.1" // adresse du serveur
 
+struct hostent *server;
+int sock;
+struct sockaddr_in sockaddServer;
+char mess[80];
 
-pid_t pid ;
-char pathname[80];
-int fifo_serveur_fd;
-int fifo_me_fd;
-
-void creation_tube_nomme() {
-    pid = getpid();
-    sprintf(pathname,PATH_FORMAT,pid);
-    mkfifo(pathname, 0666);
+void creer_socket(){
+    server = gethostbyname(SERV);
+    bzero(&sockaddServer, sizeof(sockaddServer));
+    sockaddServer.sin_family=AF_INET;
+    sockaddServer.sin_port=htons(PORT);
+    sockaddServer.sin_addr.s_addr=*(long*)server->h_addr;
+    bzero(&(sockaddServer.sin_zero),8);
+    sock=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
 }
 
-void envoyer_expression(){
-    requete_client_serveur_t* requete = malloc(sizeof(requete_client_serveur_t)); //on alloue la mémoire à la requete
-    requete->client_pid = pid;
-    printf("entrez opération \n");
-    fflush(stdout);
-    int taille = read(0,requete->expression,BUFFER_SIZE); //on lit l'entrée standard pour pouvoir récuperer l'entrée utiliateur sus forme de string
-    requete->expression[taille-1] = '\0';
-    fifo_serveur_fd = open(FIFO_SERVEUR,O_WRONLY); //ouverture du fifo serveur
-    write(fifo_serveur_fd,requete,sizeof(requete_client_serveur_t)); //écriture de la requete dans le fifo
-}
-
-void recevoir_resultat(){
-    fifo_me_fd = open(pathname,O_RDONLY); //ouverture fifo du client
-    char res[256];
-    int taille = read(fifo_me_fd,res,256); //lecture du résultat
-    res[taille] = '\0';
-    printf("%s\n",res); //affichage du résultat
-    fflush(stdout);
-};
-    
-void terminer()
-{
-    remove( pathname );
-}
-
-int main(int argc, char** argv){
-
-    creation_tube_nomme();
-    envoyer_expression();
-    recevoir_resultat();
-    terminer();   
-    return 0;
+int main(){
+    creer_socket();
+    connect(sock,(struct sockaddr*) &sockaddServer,sizeof(sockaddServer));
+    while(strncmp(mess,"fin",3)!=0){
+        printf("client : écris un message \n");
+        fflush(stdout);
+        int nb=read(0,mess,80);
+        write(sock,mess,80);
+        nb=read(sock,mess,80);
+        mess[nb]='\0';
+        printf("le serveur me dit : %s",mess);
+        fflush(stdout);
+    }
+    close(sock);
 }
